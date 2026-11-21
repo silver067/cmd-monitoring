@@ -1,47 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CMD Monitoring - Live</title>
-<style>
-  *{box-sizing:border-box} body{font-family:Inter,Arial,sans-serif;background:#0f172a;color:#fff;margin:0;padding:20px}
-  h1{font-size:24px} .top{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}
-  input,select,button{padding:10px 14px;border-radius:10px;border:0;font-size:14px}
-  input{background:#1e293b;color:#fff;outline:none;flex:1;min-width:160px}
-  button{background:#22c55e;color:#000;font-weight:700;cursor:pointer}
-  button.secondary{background:#334155;color:#fff}
-  .status{font-size:13px;color:#94a3b8}
-  .status.live{color:#22c55e;font-weight:700}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin-top:16px}
-  .card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:16px}
-  .card h3{margin:0 0 6px} .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
-  .online{background:#14532d;color:#86efac} .offline{background:#450a0a;color:#fca5a5} .busy{background:#422006;color:#fde68a}
-  .card p{color:#94a3b8;font-size:13px;margin:8px 0}
-  .row{display:flex;gap:8px;margin-top:10px} .row button{flex:1}
-  .del{background:#ef4444!important;color:#fff}
-</style>
-</head>
-<body>
-<h1>🖥️ CMD Monitoring <span style="font-size:14px;color:#94a3b8">- LIVE SYNC</span></h1>
-<div class="status" id="conn">● Connecting to Firebase...</div>
-
-<div class="top">
-  <input id="nameInput" placeholder="Computer name e.g. PC-01 / TV-Lobby">
-  <select id="statusInput"><option value="online">Online</option><option value="busy">Busy</option><option value="offline">Offline</option></select>
-  <button onclick="addPC()">+ Add Computer</button>
-  <button class="secondary" onclick="clearAll()">Clear All</button>
-</div>
-
-<div class="grid" id="grid"></div>
-<p style="color:#64748b;font-size:12px">Live URL: silver067.github.io/cmd-monitoring — All devices share this same Firebase database.</p>
-
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
-import { getDatabase, ref, onValue, set, remove, push, update } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-database.js";
+import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-database.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAvLBqdWJwO1mbH2OTpmQ48h-aeWbAfsMI",
+  apiKey: "YOUR-API-KEY-FROM-YOU-SENT",
   authDomain: "cmd-monitoring.firebaseapp.com",
   databaseURL: "https://cmd-monitoring-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "cmd-monitoring",
@@ -52,52 +17,377 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
-const pcsRef = ref(db, 'computers');
 
-const grid = document.getElementById('grid');
-const conn = document.getElementById('conn');
+// --- FIREBASE SYNC - keeps your exact code, just makes it live ---
+let isSyncingFromFirebase = false;
 
-onValue(pcsRef, (snap)=>{
-  conn.textContent = '● LIVE - Connected to Firebase';
-  conn.className = 'status live';
-  const data = snap.val() || {};
-  grid.innerHTML = '';
-  Object.entries(data).forEach(([id, pc])=>{
-    const div = document.createElement('div');
-    div.className = 'card';
-    div.innerHTML = `
-      <h3>${pc.name || 'PC'}</h3>
-      <span class="badge ${pc.status}">${(pc.status||'online').toUpperCase()}</span>
-      <p>Last update: ${pc.updatedAt ? new Date(pc.updatedAt).toLocaleTimeString() : 'now'}</p>
-      <div class="row">
-        <button onclick="window.setStatus('${id}','online')">Online</button>
-        <button class="secondary" onclick="window.setStatus('${id}','busy')">Busy</button>
-        <button class="secondary" onclick="window.setStatus('${id}','offline')">Offline</button>
-      </div>
-      <div class="row"><button class="del" onclick="window.deletePC('${id}')">Delete</button></div>
-    `;
-    grid.appendChild(div);
+function pushToFirebase(key) {
+  if (isSyncingFromFirebase) return;
+  try {
+    const val = localStorage.getItem(key);
+    set(ref(db, 'cmd/' + key), val || "");
+  } catch(e) {}
+}
+
+const SYNC_KEYS = ["changeModel","changeModelSchedule","changeModelHistory","changeModelOnline","changeModelCounts","changeModelLines"];
+
+SYNC_KEYS.forEach(key => {
+  onValue(ref(db, 'cmd/' + key), (snap) => {
+    const val = snap.val();
+    if (val === null) return;
+    const old = localStorage.getItem(key);
+    if (old !== val) {
+      isSyncingFromFirebase = true;
+      localStorage.setItem(key, val);
+      // Re-render using your existing functions
+      if (typeof renderMain === 'function') renderMain();
+      if (typeof currentLine !== 'undefined' && currentLine && typeof renderLeader === 'function') renderLeader();
+      setTimeout(()=>{ isSyncingFromFirebase = false; }, 100);
+    }
   });
-  if(Object.keys(data).length===0) grid.innerHTML = '<p style="color:#94a3b8">No computers yet. Add one above — it will appear on ALL devices instantly.</p>';
 });
 
-window.addPC = async ()=>{
-  const name = document.getElementById('nameInput').value.trim();
-  const status = document.getElementById('statusInput').value;
-  if(!name) return alert('Type a computer name first');
-  const newRef = push(pcsRef);
-  await set(newRef, { name, status, updatedAt: Date.now() });
-  document.getElementById('nameInput').value = '';
+// Hook your existing save functions to also push
+const origSetItem = localStorage.setItem.bind(localStorage);
+localStorage.setItem = function(k, v) {
+  origSetItem(k, v);
+  if (SYNC_KEYS.includes(k)) pushToFirebase(k);
 };
-window.setStatus = async (id, status)=>{
-  await update(ref(db, 'computers/'+id), { status, updatedAt: Date.now() });
-};
-window.deletePC = async (id)=>{
-  if(confirm('Delete this computer?')) await remove(ref(db, 'computers/'+id));
-};
-window.clearAll = async ()=>{
-  if(confirm('Clear ALL computers for all devices?')) await set(pcsRef, null);
-};
+</script>
+<meta charset="UTF-8">
+<title>CMD Monitoring Live - Nav Bar + Big Cards</title>
+<style>
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;padding:0;overflow:hidden}
+body{font-family:Arial;background:#e8ecf1;display:flex;flex-direction:column}
+.header-new{background:linear-gradient(135deg,#0a2a5a,#103a75,#0d2f5e);color:white;margin:8px 8px 0 8px;border-radius:16px;padding:12px 16px;flex-shrink:0;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.btn-admin2{background:#f59e0b;color:#111;border:none;padding:11px 18px;border-radius:8px;font-weight:900;font-size:15px;cursor:pointer;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.header-center{flex:1;text-align:center}
+.header-center small{font-size:12px;letter-spacing:4px;color:#dbeafe}
+.cmd-title2{font-size:34px;font-weight:900;letter-spacing:1px;line-height:1;margin:4px 0;color:#facc15}
+.cmd-sub2{font-size:13px;color:#e5e7eb}
+.header-right{text-align:right;flex-shrink:0;min-width:150px}
+.live-clock{display:flex;align-items:center;justify-content:flex-end;gap:10px;font-size:22px;font-weight:900}
+.live-dot2{width:16px;height:16px;background:#22c55e;border-radius:50%;display:inline-block;animation:livePulse 1.2s infinite}
+@keyframes livePulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.7)}70%{box-shadow:0 0 0 10px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+.live-label{color:#4ade80;font-size:16px;font-weight:900}
+.clock-sep{color:#64748b;font-weight:400}
+.last-upd{font-size:11px;color:#cbd5e1;margin-top:2px}
+.header-bottom{display:flex;gap:10px;margin-top:12px;align-items:stretch}
+.stats-row{display:flex;gap:10px;flex:1}
+.stat-box{flex:1;background:#0a2450;border:1px solid #1e4a8a;border-radius:10px;padding:10px 12px;text-align:center}
+.stat-label{font-size:11px;letter-spacing:1px;color:#e5e7eb;font-weight:700}
+.stat-val{font-size:32px;font-weight:900;line-height:1.2}
+.val-green{color:#34d399}.val-red{color:#f87171}.val-cyan{color:#22d3ee}.val-orange{color:#fbbf24}
+.legend-pic{background:white;color:#111;border-radius:10px;padding:10px 14px;width:300px;flex-shrink:0}
+.legend-pic-title{font-weight:900;font-size:12px;margin-bottom:6px}
+.legend-pic-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 12px;font-size:12px}
+.legend-pic-row{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.dot{width:14px;height:14px;min-width:14px;min-height:14px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dot-r{background:#ef4444}.dot-gray{background:#9ca3af}.dot-b{background:#06b6d4}.dot-y{background:#facc15}.dot-g{background:#22c55e}.dot-o{background:#f59e0b}
+.admin-bar{display:none;gap:6px;align-items:center;background:#dbeafe;border-bottom:1px solid #93c5fd;padding:6px 12px;flex-shrink:0;overflow-x:auto;white-space:nowrap;margin:8px 8px 0 8px;border-radius:8px}
+.admin-bar.show{display:flex}
+.admin-bar .btn{font-size:11px;padding:6px 10px;white-space:nowrap}
+.btn{padding:8px 14px;cursor:pointer;border:1px solid #ccc;background:white;color:#111;border-radius:6px;font-weight:bold}
+.nav-bar{background:white;margin:8px 8px 0 8px;border-radius:12px;padding:8px 10px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.nav-row{display:flex;gap:6px;margin-bottom:6px}
+.nav-row:last-child{margin-bottom:0}
+.nav-card{flex:1;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:8px 6px;text-align:center;cursor:pointer;font-weight:900;font-size:13px;color:#0f172a}
+.nav-card:hover{background:#dbeafe;border-color:#93c5fd}
+.nav-card .nav-status{font-size:10px;font-weight:700;margin-top:3px;display:flex;align-items:center;justify-content:center;gap:4px}
+.nav-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.nav-dot.on{background:#22c55e;box-shadow:0 0 0 3px #dcfce7}
+.nav-dot.off{background:#9ca3af}
+.nav-card.is-online{border-color:#22c55e;background:#f0fdf4}
+.nav-card.has-pending{border-color:#ef4444;background:#fef2f2}
+.nav-card.has-pending .nav-status{color:#dc2626}
+.content{flex:1;padding:8px;overflow-y:auto;overflow-x:hidden;min-height:0}
+.main-grid{display:flex;flex-direction:column;gap:10px}
+.line{border:1px solid #d1d5db;padding:12px 14px;border-radius:12px;background:white;cursor:pointer;scroll-margin-top:10px}
+.line:hover{border-color:#3498db;box-shadow:0 2px 10px rgba(0,0,0,.08)}
+.line.line-working{border:2px solid #2ecc71 !important}
+.line-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+.line-head-left{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.line-head b{font-size:18px}
+.line-stats{font-size:12px;color:#555}
+.boxes{display:flex;flex-wrap:wrap;gap:6px}
+.box{width:110px;height:72px;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:white;font-weight:bold;font-size:13px;border-radius:8px;padding:4px;cursor:pointer;vertical-align:top;border:1px solid #ccc !important;line-height:1.3}
+.box .small{font-size:10px;font-weight:normal;line-height:1.3}
+.box .who{font-size:10px;font-weight:700;margin-top:2px;word-break:break-word}
+.box .time{font-size:10px;font-weight:normal}
+.gray{background:#999}.red{background:#e74c3c}.blue{background:#3498db}.green{background:#2ecc71}
+.na{background:#333;border:2px dashed #999 !important}
+.box.yellow-only{background:#FFF9C4 !important;color:#333 !important}
+.box.delayed{border:2px solid #f39c12 !important;box-shadow:0 0 0 1px #f39c12 !important}
+.box.na{background:#333 !important;color:white !important}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.blink{animation:blink .8s infinite;border:2px solid yellow}
+.pending{color:red;font-weight:bold;margin-top:8px;font-size:13px}
+@keyframes borderBlink{0%,100%{border-color:red}50%{border-color:black}}
+.line.line-stuck{animation:borderBlink .8s infinite;border:2px solid red}
+.wrap{display:flex;gap:12px;align-items:stretch}
+#leaderGrid{border:2px solid #2ecc71 !important;padding:10px;border-radius:8px;background:white;flex:1}
+#leaderGrid .box{width:110px;height:72px;font-size:11px}
+#pendingBox{width:220px;border:1px solid #ccc;border-radius:8px;background:#f0f0f0;padding:10px;display:flex;align-items:center;justify-content:center;text-align:center}
+#pending{color:#888;font-weight:bold;font-size:16px;line-height:1.4}
+#pendingBox.pending-stuck{animation:borderBlink .8s infinite;border:3px solid red;background:white}
+#pendingBox.pending-ready{border:2px solid #2ecc71 !important;background:#e8f5e9 !important}
+.schedule{margin-top:20px;border:1px solid #ccc;padding:12px;border-radius:8px;background:white}
+.sched-row{display:inline-block;width:200px;margin:4px 8px 4px 0;font-size:13px}
+.sched-row input{width:90px;padding:4px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:200}
+.modal-inner{background:white;padding:20px;border-radius:10px;width:360px;max-width:90%;max-height:90vh;overflow:auto}
+.modal-inner input,.modal-inner select,.modal-inner textarea{width:100%;padding:10px;font-size:14px;margin:8px 0;box-sizing:border-box}
+.hidden{display:none}
+table{border-collapse:collapse;width:100%;font-size:13px}
+td,th{border:1px solid #ccc;padding:6px;text-align:left}
+.online-badge{background:#2ecc71;color:white;font-size:11px;padding:4px 10px;border-radius:12px;margin-left:0;font-weight:900;letter-spacing:.3px}
+.offline-badge{background:#9ca3af;color:white;font-size:11px;padding:4px 10px;border-radius:12px;margin-left:0;font-weight:900;letter-spacing:.3px}
+.leader-badge{background:#2563eb;color:white;font-size:11px;padding:4px 10px;border-radius:12px;margin-left:0;font-weight:900;letter-spacing:.3px}
+.sup-time-row{display:flex;gap:6px;align-items:center;margin:4px 0;font-size:13px}
+.sup-time-row span{flex:1}
+.sup-time-row input{width:90px !important;margin:0 !important}
+.leader-content{padding:20px;overflow:auto;flex:1;min-height:0}
+@media(max-width:900px){.header-top{flex-direction:column}.header-bottom{flex-direction:column}.nav-row{flex-wrap:wrap}.nav-card{flex:1 1 70px}}
+</style>
+</head>
+<body>
+<div class="header-new">
+<div class="header-top">
+<button class="btn-admin2" onclick="openSupervisor()">⚙️ ADMIN MODE</button>
+<div class="header-center">
+<small>CHANGE MODEL SYSTEM</small>
+<div class="cmd-title2">CMD MONITORING LIVE</div>
+<div class="cmd-sub2">All Lines • Real-Time • Auto Refresh</div>
+<div id="supHint" class="hidden" style="font-size:12px;color:#fde68a;margin-top:4px">Admin Mode ON — PIN 1234 — You borrowed this PC. Whoever was logged in is STILL logged in.</div>
+<span id="supLabel" style="font-weight:bold;color:#facc15;font-size:11px"></span>
+</div>
+<div class="header-right">
+<div class="live-clock"><span class="live-dot2"></span><span class="live-label">LIVE</span><span class="clock-sep">|</span><span id="clockTime">13:25</span></div>
+<div class="last-upd">Last updated <span id="lastUpdated">13:25:04</span></div>
+</div>
+</div>
+<div class="header-bottom">
+<div class="stats-row">
+<div class="stat-box"><div class="stat-label">ONLINE LINES</div><div class="stat-val val-green" id="statOnline">0 / 16</div></div>
+<div class="stat-box"><div class="stat-label">FOR QG</div><div class="stat-val val-red" id="statQG">0</div></div>
+<div class="stat-box"><div class="stat-label">FOR STAFF</div><div class="stat-val val-cyan" id="statStaff">0</div></div>
+<div class="stat-box"><div class="stat-label">DELAY CHANGE</div><div class="stat-val val-orange" id="statDelay">0</div></div>
+</div>
+<div class="legend-pic">
+<div class="legend-pic-title">STATUS LEGEND</div>
+<div class="legend-pic-grid">
+<div class="legend-pic-row"><span class="dot dot-r"></span> For QG</div>
+<div class="legend-pic-row"><span class="dot dot-gray"></span> Offline</div>
+<div class="legend-pic-row"><span class="dot dot-b"></span> For Staff</div>
+<div class="legend-pic-row"><span class="dot dot-y"></span> Not Started</div>
+<div class="legend-pic-row"><span class="dot dot-g"></span> Finished</div>
+<div class="legend-pic-row"><span class="dot dot-o"></span> Delay Change</div>
+</div>
+</div>
+</div>
+</div>
+<div class="admin-bar" id="adminBar">
+<span style="font-size:11px;font-weight:bold;color:#1e40af">ADMIN:</span>
+<button class="btn" onclick="exportHistoryCSV()">Export History</button>
+<button class="btn" onclick="exportCSV()">Export Current</button>
+<button class="btn" onclick="showHistory()">View History</button>
+<button class="btn" onclick="resetAll()">RESET ALL</button>
+<button class="btn" onclick="clearHistory()">Clear Hist</button>
+<button class="btn" onclick="openSupTime()">Set Expected Time</button>
+<button class="btn" onclick="exitSupervisor()" style="background:#e74c3c;color:white">Exit Admin</button>
+</div>
+<div class="nav-bar" id="navBar">
+<div class="nav-row" id="navRow1"></div>
+<div class="nav-row" id="navRow2"></div>
+</div>
+<div class="content" id="mainView"><div id="all" class="main-grid"></div></div>
+<div class="leader-content hidden" id="leaderView">
+<div style="display:flex;justify-content:space-between;align-items:center">
+<h3 style="margin:0">LEADER DASHBOARD - <span id="leaderLine"></span> <span class="online-badge" id="leaderBadge">● WORKING</span></h3>
+<button class="btn" id="backBtn" onclick="goBackToMain()">← Back to Main Dashboard</button>
+</div>
+<p id="leaderInfo" style="color:#555"></p>
+<div class="wrap"><div id="leaderGrid"></div><div id="pendingBox"><div id="pending"></div></div></div>
+<div style="margin-top:12px">
+<button class="btn" id="resetMyLineBtn" onclick="resetMyLine()">RESET MY LINE</button>
+<button class="btn" id="exportOneBtn" onclick="exportOneHistoryCSV()">Export This Line History CSV</button>
+<button class="btn" id="viewHistLineBtn" onclick="showHistory()">View This Line History</button>
+<button class="btn hidden" id="supTimeLineBtn" onclick="openSupTime(currentLine)">Set Expected Time (Admin)</button>
+</div>
+<div class="schedule hidden" id="schedSection">
+<h3 style="margin:0 0 8px">Set Expected Change Model Time - For <span id="schedLine"></span> (Admin Only)</h3>
+<div style="font-size:13px;color:#555">Format: <b>9</b> or <b>10</b> or <b>9,13</b> or <b>9,13,17</b> or <b>9-10</b> or <b>9-13</b> or <b>NA</b> or blank</div>
+<div id="schedInputs"></div>
+<button class="btn" onclick="saveSchedule()">SAVE SCHEDULE</button>
+</div>
+</div>
+<div class="leader-content hidden" id="historyView">
+<button class="btn" onclick="backFromHistory()">← Back</button>
+<h3>History - Raw Log - 1 Row Per Click <span id="histCount"></span></h3>
+<div id="histTable"></div>
+</div>
+<div class="modal" id="loginModal"><div class="modal-inner">
+<h3 id="loginTitle">Enter Employee No.</h3><p id="loginSub" style="color:#555;font-size:13px"></p>
+<input id="loginEmp" type="password" placeholder="Scan barcode ONLY (B1001)" autocomplete="off">
+<button class="btn" onclick="confirmLogin()">Enter</button>
+<button class="btn" id="supViewBtn" onclick="supervisorView()" style="background:#e67e22;color:white">View as Admin (Expected Time Only)</button>
+<button class="btn" onclick="closeModal('loginModal')">Cancel</button>
+</div></div>
+<div class="modal" id="stationModal"><div class="modal-inner">
+<h3 id="stationTitle">Station</h3><p id="stationInfo" style="font-size:13px;color:#555"></p>
+<input id="stationEmp" type="password" placeholder="Scan barcode ONLY (B1001 / B2001 / B3001)" autocomplete="off">
+<button class="btn" onclick="confirmStation()">Confirm Step</button>
+<button class="btn" onclick="closeModal('stationModal')">Cancel</button>
+</div></div>
+<div class="modal" id="supModal"><div class="modal-inner">
+<h3>Admin Mode - PIN Only</h3>
+<input id="supPin" placeholder="Enter PIN 1234" type="password" inputmode="numeric" autocomplete="off">
+<button class="btn" onclick="confirmSupervisor()">Turn ON Admin Mode</button>
+<button class="btn" onclick="closeModal('supModal')">Cancel</button>
+</div></div>
+<div class="modal" id="logoutModal"><div class="modal-inner">
+<h3>Logout - <span id="logoutLine"></span></h3>
+<input id="logoutEmp" type="password" placeholder="Scan barcode ONLY (B1001)" autocomplete="off">
+<button class="btn" onclick="confirmLogout()">Logout</button>
+<button class="btn" onclick="closeModal('logoutModal')">Cancel</button>
+</div></div>
+<div class="modal" id="resetModal"><div class="modal-inner">
+<h3>RESET MY LINE - <span id="resetLineName"></span></h3>
+<input id="resetEmp" type="password" placeholder="Scan barcode ONLY (B1001)" autocomplete="off">
+<button class="btn" onclick="confirmResetMyLine()" style="background:#e74c3c;color:white">RESET NOW</button>
+<button class="btn" onclick="closeModal('resetModal')">Cancel</button>
+</div></div>
+<div class="modal" id="supTimeModal"><div class="modal-inner" style="width:440px">
+<h3>Set Expected Change Model Time (Admin)</h3>
+<label>Line:</label><select id="supTimeLine" onchange="loadSupTime()"></select>
+<div id="supTimeList"></div>
+<button class="btn" onclick="saveSupTime()" style="background:#27ae60;color:white">Save All Times for This Line</button>
+<button class="btn" onclick="clearSupTimeLine()" style="background:#e74c3c;color:white">Clear All Times for This Line</button>
+<button class="btn" onclick="closeModal('supTimeModal')">Close</button>
+</div></div>
+<script>
+var TEST_MODE=false;
+var BARCODE_TO_EMP={"B1001":"1001","B1002":"1002","B1003":"1003","B1004":"1004","B1005":"1005","B2001":"2001","B2002":"2002","B2003":"2003","B2004":"2004","B2005":"2005","B3001":"3001","B3002":"3002","B3003":"3003","B3004":"3004","B3005":"3005","B3006":"3006","B3007":"3007","B3008":"3008","B9001":"9001","B9002":"9002","B9003":"9003","B9004":"9004","B9005":"9005"};
+function resolveEmp(input){if(!input) return null; input=String(input).trim(); if(BARCODE_TO_EMP[input]) return BARCODE_TO_EMP[input]; if(TEST_MODE && EMPLOYEES[input]) return input; return null;}
+var DEFAULT_LINES={"LV01":["AS05","AS06","AS07","AS08","AS09","RE01","FA01","IS01","FA02","FA03","FC01","FI01","MDI2","FI03"],"LV02":["AS05","AS06","AS07","AS08","AS09","RE01","FA01","IS01","FA02","FA03","FC01","FI01","MDI2","FI03"],"LV03":["AS05","AS06","AS07","AS08","AS09","RE01","FA01","IS01","FA02","FA03","FC01","FI01","MDI2","FI03"],"LV04":["AS05","AS06","AS07","AS08","AS09","RE01","FA01","IS01","FA02","FA03","FC01","FC02","FI01","MDI2","FI03"],"LV05":["AS05","AS06","AS07","AS08","AS09","RE01","FA01","IS01","FA02","FA03","FC01","FC02","FI01","MDI2","FI03"],"LV06":["FA04","AS05","AS06","AS07","AS08","HTM1","IS01","RE01","FA01","FA02","FA03","GAP","HC1","FC01","FC02","FI03","MDI2"],"LV07":["AS05","AS06","AS07","AS08","AS09","RE01","FA01","FA02","FA03","FA04","GAP","HC1","IS01","FC01-A","FC01-B","FC02","FI03"],"LV08":["AS05","AS06","AS07","AS08","AS09","RE01","FA01","FA02","FA03","FA04","GAP","HC1","IS01","FC01-A","FI03"],"LV09":["AS05","AS06","AS07","AS08","AS09","RE01","FOI2","FA01","FA02","FA02-B","FA03","FA04","GAP","HC1","IS01","FC01","FC02","FI02","FI03"],"MC1":["AS01","AS02","AS03","AS04"],"MC2":["AS01","AS02","AS03","AS04"],"MC3":["AS01","PT01","AC02","PB03","FB04","AS02","AS03","AS04"],"FOG1":["AS01","AS02","AS03","AS04-A","AS04-B"],"FOG2":["AS01","AS02","AS03","AS04"],"FOG3":["AS01","AS02","AS03","AS04-A","AS04-B","AS04-C"],"FToF":["HA01","HA02","HA03","HA04"]};
+function loadLinesObj(){try{var s=localStorage.getItem("changeModelLines"); if(s) return JSON.parse(s);}catch(e){} return JSON.parse(JSON.stringify(DEFAULT_LINES));}
+var STATIONS_BY_LINE=loadLinesObj();
+var EMPLOYEES={"1001":{name:"Juan Dela Cruz",role:"Leader"},"1002":{name:"Ana Santos",role:"Leader"},"1003":{name:"Mark Reyes",role:"Leader"},"1004":{name:"Liza Villanueva",role:"Leader"},"1005":{name:"Carlo Mendoza",role:"Leader"},"2001":{name:"Maria Garcia",role:"QG"},"2002":{name:"Jose Ramos",role:"QG"},"2003":{name:"Angel Torres",role:"QG"},"2004":{name:"Karen Lopez",role:"QG"},"2005":{name:"Paul Bautista",role:"QG"},"3001":{name:"Pedro Aquino",role:"Staff"},"3002":{name:"Rosa Flores",role:"Staff"},"3003":{name:"Miguel Castro",role:"Staff"},"3004":{name:"Jenny Cruz",role:"Staff"},"3005":{name:"Kevin Diaz",role:"Staff"},"3006":{name:"Sarah Lim",role:"Staff"},"3007":{name:"Allan Gomez",role:"Staff"},"3008":{name:"Grace Tan",role:"Staff"},"9001":{name:"Juan Admin",role:"Supervisor"},"9002":{name:"Ana Admin",role:"Supervisor"},"9003":{name:"Mark Admin",role:"Supervisor"},"9004":{name:"Liza Admin",role:"Supervisor"},"9005":{name:"Carlo Admin",role:"Supervisor"}};
+var ORDERED_LINES=["MC1","MC2","MC3","FOG1","FOG2","FOG3","FToF","LV01","LV02","LV03","LV04","LV05","LV06","LV07","LV08","LV09"];
+var NAV_ROW1=["MC1","MC2","MC3","FOG1","FOG2","FOG3","FToF"];
+var NAV_ROW2=["LV01","LV02","LV03","LV04","LV05","LV06","LV07","LV08","LV09"];
+var currentLine=null,pendingStation=null,isSupervisor=false,loginLine=null,prevView="main",isSupView=false,currentUserEmp=null,currentUserRole=null,currentUserName=null,savedLeaderBeforeSupView=null,currentView="main",mainTimer=null,leaderTimer=null;
+function esc(v){return String(v==null?"":v).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/'/g,"&#39;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function load(){return JSON.parse(localStorage.getItem("changeModel")||'{}');}
+function save(d){localStorage.setItem("changeModel",JSON.stringify(d));}
+function loadSched(){return JSON.parse(localStorage.getItem("changeModelSchedule")||'{}');}
+function saveSchedObj(o){localStorage.setItem("changeModelSchedule",JSON.stringify(o));}
+function loadHist(){return JSON.parse(localStorage.getItem("changeModelHistory")||'[]');}
+function saveHist(h){localStorage.setItem("changeModelHistory",JSON.stringify(h));}
+function loadOnline(){return JSON.parse(localStorage.getItem("changeModelOnline")||'{}');}
+function saveOnline(o){localStorage.setItem("changeModelOnline",JSON.stringify(o));}
+function loadCounts(){try{return JSON.parse(localStorage.getItem("changeModelCounts")||'{}');}catch(e){return {};}}
+function saveCounts(c){localStorage.setItem("changeModelCounts",JSON.stringify(c));}
+function getHoursList(line,id){var s=loadSched(); var txt=((s[line]&&s[line][id])||"").trim(); if(!txt) return []; var out=[]; txt.split(",").forEach(function(p){p=p.trim(); if(!p) return; if(p.indexOf("-")!==-1){var parts=p.split("-"); var a=parseInt(parts[0].trim(),10); var b=parseInt(parts[1].trim(),10); if(!isNaN(a)&&!isNaN(b)){if(b<a){var t=a;a=b;b=t;} for(var h=a;h<=b;h++){out.push(h);} return;}} var h2=parseInt(p,10); if(!isNaN(h2)) out.push(h2);}); out.sort(function(a,b){return a-b;}); return out;}
+function getTotal(line,id){if(isNA(line,id)) return 0; return getHoursList(line,id).length;}
+function getDone(line,id){var c=loadCounts(); var v=c[line+"|"+id]; return v?parseInt(v,10)||0:0;}
+function setDone(line,id,v){var c=loadCounts(); c[line+"|"+id]=v; saveCounts(c);}
+function isNA(line,id){var s=loadSched(); var t=((s[line]&&s[line][id])||"").trim().toUpperCase(); return t==="NA"||t==="N/A";}
+function isOverdue(line,id,status){if(status==="green") return false; if(isNA(line,id)) return false; var hours=getHoursList(line,id); if(hours.length===0) return false; var curHour=new Date().getHours(); if(hours.indexOf(curHour)!==-1) return false; return hours.some(function(h){return curHour>h;});}
+function checkAutoReset(line,id,info){if(!info||info.status!=="green") return info; if(isNA(line,id)) return info; var hours=getHoursList(line,id); if(hours.length<2) return info; var done=getDone(line,id); if(done>=hours.length) return info; var next=hours[done]; if(next===undefined) return info; var curHour=new Date().getHours(); if(curHour>=next){var d=load(); if(!d[line]) d[line]={}; var fresh=(d[line]&&d[line][id])||{status:"gray"}; if(fresh.status!=="green") return fresh; d[line][id]={status:"gray",by:"",time:"",ts:Date.now()}; save(d); var now=new Date(); var h=loadHist(); h.push({date:now.toLocaleDateString(),time:now.toLocaleTimeString(),line:line,station:id,from:"green",to:"gray",emp:"AUTO",name:"Auto Reset",role:"System"}); saveHist(h); return d[line][id];} return info;}
+function isLeaderPresent(line){var on=loadOnline(); var cur=on[line]; return cur&&cur.role==="Leader";}
+function isActingLeader(emp,role,line){if(role==="Leader") return true; if((role==="Staff"||role==="Supervisor")&&!isLeaderPresent(line)) return true; return false;}
+function logResetForLine(line,emp,name,role){var data=load(); var stations=loadLinesObj()[line]||[]; var h=loadHist(); var now=new Date(); stations.forEach(function(st){var info=(data[line]&&data[line][st])||{status:"gray"}; var done=getDone(line,st); if(info.status!=="gray"||done>0){h.push({date:now.toLocaleDateString(),time:now.toLocaleTimeString(),line:line,station:st,from:"RESET",to:"RESET",emp:emp,name:name,role:role});}}); saveHist(h);}
+function openModal(id){document.getElementById(id).style.display="flex";}
+function closeModal(id){document.getElementById(id).style.display="none";}
+function updateClock(){var now=new Date(); var hh=String(now.getHours()).padStart(2,"0"); var mm=String(now.getMinutes()).padStart(2,"0"); var ss=String(now.getSeconds()).padStart(2,"0"); document.getElementById("clockTime").innerText=hh+":"+mm; document.getElementById("lastUpdated").innerText=hh+":"+mm+":"+ss;}
+setInterval(updateClock,1000); updateClock();
+function scrollToLine(line){var el=document.getElementById("line-"+line); if(el){el.scrollIntoView({behavior:"smooth",block:"start"}); el.style.boxShadow="0 0 0 3px #2563eb"; setTimeout(function(){el.style.boxShadow="";},1200);}}
+function renderNavBar(lineInfo){
+function cardHTML(line){var inf=lineInfo[line]||{online:false,pending:false}; var cls="nav-card"+(inf.online?" is-online":"")+(inf.pending?" has-pending":""); var status=inf.online?"<span class='nav-dot on'></span> Online":"<span class='nav-dot off'></span> Offline"; if(inf.pending) status="<span class='nav-dot' style='background:#ef4444'></span> Pending"; return "<div class='"+cls+"' onclick=\"scrollToLine('"+esc(line)+"')\">"+esc(line)+"<div class='nav-status'>"+status+"</div></div>";}
+document.getElementById("navRow1").innerHTML=NAV_ROW1.map(cardHTML).join("");
+document.getElementById("navRow2").innerHTML=NAV_ROW2.map(cardHTML).join("");
+}
+function renderMain(){
+STATIONS_BY_LINE=loadLinesObj(); var data=load(); var now=Date.now(); var html=""; var hasActive=false,anyStuck=false; var online=loadOnline(); var onlineLines=[]; var totalRed=0,totalBlue=0,totalDelayed=0; var lineInfo={};
+ORDERED_LINES.forEach(function(line){
+if(!STATIONS_BY_LINE[line]) return; var stations=STATIONS_BY_LINE[line]; var green=0,red=0,blue=0,delayed=0,na=0,stuck=0;
+stations.forEach(function(id){
+var info=(data[line]&&data[line][id])||{status:"gray"}; info=checkAutoReset(line,id,info); data[line]=data[line]||{}; data[line][id]=info;
+if(isNA(line,id)){na++;return;} if(isOverdue(line,id,info.status)){delayed++; totalDelayed++;}
+if(info.status==="green")green++; if(info.status==="red"){red++; totalRed++;} if(info.status==="blue"){blue++; totalBlue++;}
+if((info.status==="red"||info.status==="blue")&&info.ts&&(now-info.ts>20000)){stuck++;anyStuck=true;}
+if(info.status==="red"||info.status==="blue") hasActive=true;
+});
+var total=stations.length-na; var isLoggedIn=!!online[line]; if(isLoggedIn) onlineLines.push(line); lineInfo[line]={online:isLoggedIn,pending:(red>0||blue>0)};
+var cls="line"; if(stuck>0) cls+=" line-stuck"; if(isLoggedIn) cls+=" line-working";
+var leaderName=isLoggedIn?(online[line].name||"").toUpperCase():"";
+var badges=isLoggedIn?"<span class='online-badge'>● WORKING</span><span class='leader-badge'>"+esc(leaderName)+"</span>":"<span class='offline-badge'>○ OFFLINE</span>";
+html+="<div class='"+cls+"' id='line-"+esc(line)+"' data-line=\""+esc(line)+"\" onclick=\"askLogin(this.dataset.line)\"><div class='line-head'><div class='line-head-left'><b>"+esc(line)+"</b>"+badges+"</div><span class='line-stats'>🟩 "+green+"/"+total+" &nbsp; 🔴 "+red+" &nbsp; 🔵 "+blue+" &nbsp; 🟧 "+delayed+" &nbsp; N/A "+na;
+if(isSupervisor) html+=" <button class='btn' data-line=\""+esc(line)+"\" onclick=\"event.stopPropagation();openSupTime(this.dataset.line)\" style='font-size:11px;padding:4px 8px'>Set Time</button>";
+if(isSupervisor&&isLoggedIn) html+=" <button class='btn' data-line=\""+esc(line)+"\" onclick=\"event.stopPropagation();supervisorKick(this.dataset.line)\" style='font-size:11px;padding:4px 8px;background:#e74c3c;color:white'>Kick</button>";
+html+="</span></div>";
+if(stuck>0) html+="<div class='pending'>Pending Change Model: "+esc(line)+"</div>";
+html+="<div class='boxes'>";
+stations.forEach(function(id){
+var info=(data[line]&&data[line][id])||{status:"gray"}; info=checkAutoReset(line,id,info); var naF=isNA(line,id); var del=!naF&&isOverdue(line,id,info.status); var disp=naF?"na":info.status; var totalC=getTotal(line,id); var doneC=getDone(line,id);
+var labelHtml="<div>"+esc(id)+"</div>";
+if(totalC>0) labelHtml+="<div class='small'>"+doneC+"/"+totalC+"</div>"; else labelHtml+="<div class='small'>&nbsp;</div>";
+if(naF) labelHtml="<div>"+esc(id)+"</div><div class='small'>N/A</div><div class='small'>&nbsp;</div>";
+else if(info.by){var shortName=info.by.split(" (")[0]; labelHtml+="<div class='who'>"+esc(shortName)+"</div><div class='time'>"+esc(info.time||"")+"</div>";} else {labelHtml+="<div class='who'>&nbsp;</div><div class='time'>&nbsp;</div>";}
+var isStuck=!naF&&(info.status==="red"||info.status==="blue")&&info.ts&&(now-info.ts>20000); var extra=(del?" delayed":"")+(isStuck?" blink":""); if(isLoggedIn&&!naF&&info.status==="gray") extra+=" yellow-only";
+html+="<div class='box "+disp+extra+"' title='"+esc(id)+" By: "+esc(info.by||"-")+" | Time: "+esc(info.time||"-")+"'>"+labelHtml+"</div>";
+});
+html+="</div></div>";
+});
+document.getElementById("all").innerHTML=html;
+renderNavBar(lineInfo);
+document.getElementById("statOnline").innerText=onlineLines.length+" / 16";
+document.getElementById("statQG").innerText=totalRed;
+document.getElementById("statStaff").innerText=totalBlue;
+document.getElementById("statDelay").innerText=totalDelayed;
+updateClock();
+if(mainTimer) clearTimeout(mainTimer);
+if(hasActive&&!anyStuck) mainTimer=setTimeout(function(){renderMain(); if(currentLine) renderLeader();},21000);
+}
+function askLogin(line){loginLine=line; document.getElementById("loginTitle").innerText="Enter "+line+" - Scan Barcode"; document.getElementById("loginSub").innerText="Scan barcode for "+line+". Only Leader / Staff / Admin can enter."; document.getElementById("loginEmp").value=""; document.getElementById("supViewBtn").style.display=isSupervisor?"inline-block":"none"; openModal("loginModal"); setTimeout(function(){var el=document.getElementById("loginEmp"); el.focus(); el.onkeydown=function(e){if(e.key==="Enter") confirmLogin();};},100);}
+function confirmLogin(){var raw=document.getElementById("loginEmp").value.trim(); var emp=resolveEmp(raw); if(!emp){alert("Invalid Barcode."); return;} var u=EMPLOYEES[emp]; if(!u){alert("Invalid Barcode."); return;} if(u.role==="QG"){alert("Only Leader / Staff / Admin can enter."); return;} var onCheck=loadOnline(); var existing=onCheck[loginLine]; if(existing&&existing.emp!==emp){alert("Line "+loginLine+" is WORKING - "+existing.name+" is inside."); return;} for(var l in onCheck){if(onCheck[l]&&onCheck[l].emp===emp&&l!==loginLine){alert("You are already WORKING in "+l+"."); return;}} currentLine=loginLine; isSupView=false; savedLeaderBeforeSupView=null; currentUserEmp=emp; currentUserRole=u.role; currentUserName=u.name; closeModal("loginModal"); var on=loadOnline(); on[currentLine]={name:u.name,emp:emp,role:u.role,time:new Date().toLocaleTimeString()}; saveOnline(on); var acting=isActingLeader(emp,u.role,currentLine); var label=u.name+" ("+u.role+" - "+emp+")"+(acting&&u.role!=="Leader"?" - Acting Leader":""); enterLeaderView(label,false);}
+function supervisorView(){if(!isSupervisor){alert("Admin only"); return;} if(currentLine&&!isSupView&&currentUserEmp){savedLeaderBeforeSupView={line:currentLine,emp:currentUserEmp,role:currentUserRole,name:currentUserName};} currentLine=loginLine; isSupView=true; closeModal("loginModal"); var label=currentUserEmp?("Admin View - "+currentUserName+" ("+currentUserEmp+") - View Only"):"Admin View - Admin - View Only"; enterLeaderView(label,true);}
+function supervisorKick(line){if(!isSupervisor){alert("Admin only"); return;} var on=loadOnline(); var cur=on[line]; if(!cur){alert(line+" is already OFFLINE."); return;} if(!confirm("Admin: Force Logout + RESET "+line+"? Kick "+cur.name)) return; logResetForLine(line,"SUP","Admin","Supervisor"); delete on[line]; saveOnline(on); var d=load(); d[line]={}; save(d); var c=loadCounts(); Object.keys(c).forEach(function(k){if(k.indexOf(line+"|")===0) delete c[k];}); saveCounts(c); var s=loadSched(); delete s[line]; saveSchedObj(s); if(line===currentLine&&!isSupView){currentLine=null; loginLine=null; isSupView=false; savedLeaderBeforeSupView=null; currentUserEmp=null; currentUserRole=null; currentUserName=null; document.getElementById("leaderView").classList.add("hidden"); document.getElementById("historyView").classList.add("hidden"); document.getElementById("mainView").classList.remove("hidden"); currentView="main";} renderMain(); alert("Kicked + Reset");}
+function enterLeaderView(who,supView){document.getElementById("mainView").classList.add("hidden"); document.getElementById("navBar").classList.add("hidden"); document.getElementById("historyView").classList.add("hidden"); document.getElementById("leaderView").classList.remove("hidden"); currentView="leader"; document.getElementById("leaderLine").innerText=currentLine; document.getElementById("leaderBadge").innerText=supView?"● VIEW ONLY":"● WORKING"; document.getElementById("leaderInfo").innerText="Logged in as "+who+" | Line: "+currentLine; document.getElementById("resetMyLineBtn").style.display=supView?"none":"inline-block"; document.getElementById("exportOneBtn").style.display=supView?"none":"inline-block"; document.getElementById("viewHistLineBtn").style.display=supView?"none":"inline-block"; document.getElementById("supTimeLineBtn").classList.toggle("hidden",!isSupervisor); document.getElementById("schedSection").classList.toggle("hidden",!(isSupervisor&&supView)); document.getElementById("backBtn").innerText=supView?"← Back to Main (No Logout Needed)":"← Back to Main Dashboard"; renderLeader(); renderSchedInputs(); renderMain();}
+function goBackToMain(){if(isSupView){exitSupView(); return;} askLogout();}
+function exitSupView(){if(savedLeaderBeforeSupView&&savedLeaderBeforeSupView.line===currentLine){var saved=savedLeaderBeforeSupView; savedLeaderBeforeSupView=null; currentLine=saved.line; isSupView=false; currentUserEmp=saved.emp; currentUserRole=saved.role; currentUserName=saved.name; var u=EMPLOYEES[saved.emp]; var acting=isActingLeader(saved.emp,saved.role,currentLine); var label=u.name+" ("+u.role+" - "+saved.emp+")"+(acting&&u.role!=="Leader"?" - Acting Leader":""); enterLeaderView(label,false); return;} savedLeaderBeforeSupView=null; currentLine=null; loginLine=null; isSupView=false; currentUserEmp=null; currentUserRole=null; currentUserName=null; document.getElementById("leaderView").classList.add("hidden"); document.getElementById("historyView").classList.add("hidden"); document.getElementById("mainView").classList.remove("hidden"); document.getElementById("navBar").classList.remove("hidden"); currentView="main"; renderMain();}
+function askLogout(){document.getElementById("logoutLine").innerText=currentLine; document.getElementById("logoutEmp").value=""; openModal("logoutModal"); setTimeout(function(){var el=document.getElementById("logoutEmp"); el.focus(); el.onkeydown=function(e){if(e.key==="Enter") confirmLogout();};},100);}
+function confirmLogout(){var raw=document.getElementById("logoutEmp").value.trim(); var emp=resolveEmp(raw); if(!emp){alert("Invalid Barcode."); return;} var u=EMPLOYEES[emp]; if(!u){alert("Invalid Barcode."); return;} var owner=loadOnline()[currentLine]; if(owner&&emp!==owner.emp){alert("Only owner can logout."); return;} closeModal("logoutModal"); backToMain(false);}
+function backToMain(keepOnline){if(currentLine&&!keepOnline){var on=loadOnline(); delete on[currentLine]; saveOnline(on);} currentLine=null; loginLine=null; isSupView=false; savedLeaderBeforeSupView=null; currentUserEmp=null; currentUserRole=null; currentUserName=null; document.getElementById("leaderView").classList.add("hidden"); document.getElementById("historyView").classList.add("hidden"); document.getElementById("mainView").classList.remove("hidden"); document.getElementById("navBar").classList.remove("hidden"); currentView="main"; renderMain();}
+function renderLeader(){if(!currentLine) return; STATIONS_BY_LINE=loadLinesObj(); var line=currentLine; var data=load(); var stations=STATIONS_BY_LINE[line]||[]; var now=Date.now(); var html=""; var stuckList=[]; var hasActive=false; var online=loadOnline(); var isLineOnline=!!online[line]; stations.forEach(function(id){var info=(data[line]&&data[line][id])||{status:"gray"}; info=checkAutoReset(line,id,info); var naF=isNA(line,id); var del=!naF&&isOverdue(line,id,info.status); var disp=naF?"na":info.status; var totalC=getTotal(line,id); var doneC=getDone(line,id); var labelHtml="<div>"+esc(id)+"</div>"; if(totalC>0) labelHtml+="<div class='small'>"+doneC+"/"+totalC+"</div>"; if(naF) labelHtml+="<div class='small'>N/A</div>"; else if(info.by){labelHtml+="<div class='who'>"+esc(info.by.split(" (")[0])+"</div><div class='time'>"+esc(info.time||"")+"</div>";} var isStuck=!naF&&(info.status==="red"||info.status==="blue")&&info.ts&&(now-info.ts>20000); if(isStuck) stuckList.push(id); if(!naF&&(info.status==="red"||info.status==="blue")) hasActive=true; var extra=(del?" delayed":"")+(isStuck?" blink":""); if(!naF&&info.status==="gray"&&(isLineOnline||isSupView)) extra+=" yellow-only"; var who=""; html+="<div class='box "+disp+extra+"' data-station=\""+esc(id)+"\" onclick=\"askStation(this.dataset.station)\">"+labelHtml+who+"</div>";}); document.getElementById("leaderGrid").innerHTML=html; var pb=document.getElementById("pendingBox"); var p=document.getElementById("pending"); pb.classList.remove("pending-stuck","pending-ready"); if(stuckList.length>0){pb.classList.add("pending-stuck"); p.style.color="red"; p.innerHTML="Pending Change Model:<br>"+stuckList.join(", ");} else {pb.classList.add("pending-ready"); p.style.color="#27ae60"; p.innerHTML="Online<br><span style='font-size:13px;font-weight:normal'>No Pending</span>";} if(leaderTimer) clearTimeout(leaderTimer); if(hasActive&&stuckList.length===0) leaderTimer=setTimeout(renderLeader,21000);}
+function askStation(id){if(isSupView){alert("Admin View-Only"); return;} if(isNA(currentLine,id)){alert(id+" is N/A."); return;} pendingStation=id; var data=load(); var info=(data[currentLine]&&data[currentLine][id])||{status:"gray"}; var totalC=getTotal(currentLine,id); var doneC=getDone(currentLine,id); document.getElementById("stationTitle").innerText=currentLine+" - "+id+" ("+(info.status==="gray"?"YELLOW":info.status.toUpperCase())+")"+(totalC>0?" - Changed "+doneC+"/"+totalC:""); document.getElementById("stationInfo").innerText="Current: "+(info.status==="gray"?"Not Started (Yellow)":info.status)+" | By: "+(info.by||"-"); document.getElementById("stationEmp").value=""; openModal("stationModal"); setTimeout(function(){var el=document.getElementById("stationEmp"); el.focus(); el.onkeydown=function(e){if(e.key==="Enter") confirmStation();};},100);}
+function doStationMove(from,to,byName,emp,role,shouldLog){if(shouldLog===undefined) shouldLog=true; var data=load(); if(!data[currentLine]) data[currentLine]={}; var now=new Date(); data[currentLine][pendingStation]={status:to,by:byName,time:now.toLocaleTimeString(),ts:Date.now()}; save(data); if(to==="green"){setDone(currentLine,pendingStation,getDone(currentLine,pendingStation)+1);} if(from==="green"&&to==="gray"){setDone(currentLine,pendingStation,Math.max(0,getDone(currentLine,pendingStation)-1));} if(shouldLog){var h=loadHist(); h.push({date:now.toLocaleDateString(),time:now.toLocaleTimeString(),line:currentLine,station:pendingStation,from:from,to:to,emp:emp,name:byName,role:role}); saveHist(h);} closeModal("stationModal"); renderLeader(); renderMain();}
+function confirmStation(){var raw=document.getElementById("stationEmp").value.trim(); var emp=resolveEmp(raw); if(!emp){alert("Invalid Barcode."); return;} var u=EMPLOYEES[emp]; if(!u){alert("Invalid Barcode."); return;} var data=load(); var cur=((data[currentLine]&&data[currentLine][pendingStation])||{status:"gray"}).status; var acting=isActingLeader(emp,u.role,currentLine); var next=null,msg=""; if(cur==="gray"&&(u.role==="Leader"||acting)){next="red";} else if(cur==="red"&&u.role==="QG"){next="blue";} else if(cur==="blue"&&(u.role==="Staff"||u.role==="Supervisor")){next="green";} else if(cur==="green"&&(u.role==="Leader"||acting)){next="gray"; msg="Reset to Yellow.";} else {alert("Not allowed for "+u.role+" on "+cur); return;} doStationMove(cur,next,u.name+" ("+u.role+(acting&&u.role!=="Leader"?" - Acting Leader":"")+")",emp,u.role,true); if(msg) alert(msg);}
+function renderSchedInputs(){if(!currentLine) return; STATIONS_BY_LINE=loadLinesObj(); document.getElementById("schedLine").innerText=currentLine; var sched=loadSched(); var html=""; (STATIONS_BY_LINE[currentLine]||[]).forEach(function(id){var v=(sched[currentLine]&&sched[currentLine][id])||""; html+="<div class='sched-row'>"+esc(id)+": <input id='sched_"+esc(id)+"' value='"+esc(v)+"'></div>";}); document.getElementById("schedInputs").innerHTML=html;}
+function saveSchedule(){if(!isSupervisor){alert("Only Admin"); return;} var sched=loadSched(); if(!sched[currentLine]) sched[currentLine]={}; (STATIONS_BY_LINE[currentLine]||[]).forEach(function(id){var el=document.getElementById("sched_"+id); if(el) sched[currentLine][id]=el.value.trim();}); saveSchedObj(sched); alert("Schedule saved"); renderLeader(); renderMain();}
+function resetMyLine(){if(isSupView){alert("Admin View-Only"); return;} document.getElementById("resetLineName").innerText=currentLine; document.getElementById("resetEmp").value=""; openModal("resetModal"); setTimeout(function(){var el=document.getElementById("resetEmp"); el.focus(); el.onkeydown=function(e){if(e.key==="Enter") confirmResetMyLine();};},100);}
+function confirmResetMyLine(){var raw=document.getElementById("resetEmp").value.trim(); var emp=resolveEmp(raw); if(!emp){alert("Invalid Barcode."); return;} var u=EMPLOYEES[emp]; if(!u){alert("Invalid Barcode."); return;} var acting=isActingLeader(emp,u.role,currentLine); if(!(u.role==="Leader"||acting)){alert("Only Leader / Acting Leader"); return;} if(!confirm("Reset "+currentLine+"?")) return; closeModal("resetModal"); doResetLine(emp,u.name,u.role);}
+function doResetLine(emp,name,role){logResetForLine(currentLine,emp,name,role); var d=load(); d[currentLine]={}; save(d); var s=loadSched(); delete s[currentLine]; saveSchedObj(s); var c=loadCounts(); Object.keys(c).forEach(function(k){if(k.indexOf(currentLine+"|")===0) delete c[k];}); saveCounts(c); renderLeader(); renderSchedInputs(); renderMain(); alert("RESET DONE");}
+function openSupervisor(){if(isSupervisor){alert("Already in Admin Mode"); return;} document.getElementById("supPin").value=""; openModal("supModal");}
+function confirmSupervisor(){var pin=document.getElementById("supPin").value.trim(); if(pin!=="1234"){alert("Wrong PIN"); return;} isSupervisor=true; closeModal("supModal"); document.getElementById("supLabel").innerText="Admin Mode ON (PIN 1234)"; document.getElementById("supHint").classList.remove("hidden"); document.getElementById("adminBar").classList.add("show"); if(currentLine&&!isSupView&&currentUserEmp){var u=EMPLOYEES[currentUserEmp]; var acting=isActingLeader(currentUserEmp,currentUserRole,currentLine); var label=u.name+" ("+u.role+" - "+currentUserEmp+")"+(acting&&u.role!=="Leader"?" - Acting Leader":""); enterLeaderView(label,false);} else {renderMain();}}
+function exitSupervisor(){isSupervisor=false; document.getElementById("supLabel").innerText=""; document.getElementById("adminBar").classList.remove("show"); document.getElementById("supHint").classList.add("hidden"); if(isSupView){exitSupView(); return;} if(currentLine&&currentUserEmp){var u=EMPLOYEES[currentUserEmp]; var acting=isActingLeader(currentUserEmp,currentUserRole,currentLine); var label=u.name+" ("+u.role+" - "+currentUserEmp+")"+(acting&&u.role!=="Leader"?" - Acting Leader":""); enterLeaderView(label,false);} else {document.getElementById("leaderView").classList.add("hidden"); document.getElementById("historyView").classList.add("hidden"); document.getElementById("mainView").classList.remove("hidden"); document.getElementById("navBar").classList.remove("hidden"); currentView="main"; renderMain();}}
+function resetAll(){if(!isSupervisor){alert("Admin only"); return;} if(!confirm("Reset ALL lines?")) return; var allLines=Object.keys(loadLinesObj()); allLines.forEach(function(l){logResetForLine(l,"SUP","Admin","Supervisor");}); localStorage.removeItem("changeModel"); localStorage.removeItem("changeModelSchedule"); localStorage.removeItem("changeModelOnline"); localStorage.removeItem("changeModelCounts"); if(currentLine){backToMain(true);} renderMain(); if(currentLine) renderLeader();}
+function clearHistory(){if(!isSupervisor){alert("Admin only"); return;} if(!confirm("Clear ALL history?")) return; localStorage.removeItem("changeModelHistory"); alert("History cleared."); showHistory();}
+function openSupTime(preselect){if(!isSupervisor){alert("Admin only"); return;} var sel=document.getElementById("supTimeLine"); sel.innerHTML=""; Object.keys(loadLinesObj()).forEach(function(l){var o=document.createElement("option"); o.value=l; o.text=l; sel.appendChild(o);}); if(preselect) sel.value=preselect; else if(currentLine) sel.value=currentLine; loadSupTime(); openModal("supTimeModal");}
+function loadSupTime(){var line=document.getElementById("supTimeLine").value; var sched=loadSched(); var stations=loadLinesObj()[line]||[]; var html=""; stations.forEach(function(id){var v=(sched[line]&&sched[line][id])||""; html+="<div class='sup-time-row'><span><b>"+esc(id)+"</b></span><input id='supTime_"+esc(id)+"' value='"+esc(v)+"'></div>";}); document.getElementById("supTimeList").innerHTML=html;}
+function saveSupTime(){if(!isSupervisor){alert("Admin only"); return;} var line=document.getElementById("supTimeLine").value; var sched=loadSched(); if(!sched[line]) sched[line]={}; var stations=loadLinesObj()[line]||[]; stations.forEach(function(id){var el=document.getElementById("supTime_"+id); if(el) sched[line][id]=el.value.trim();}); saveSchedObj(sched); closeModal("supTimeModal"); alert("Expected Time saved for "+line); renderMain(); if(currentLine) renderLeader(); renderSchedInputs();}
+function clearSupTimeLine(){if(!isSupervisor){alert("Admin only"); return;} var line=document.getElementById("supTimeLine").value; if(!confirm("Clear all Expected Times for "+line+"?")) return; var sched=loadSched(); sched[line]={}; saveSchedObj(sched); var c=loadCounts(); Object.keys(c).forEach(function(k){if(k.indexOf(line+"|")===0) delete c[k];}); saveCounts(c); loadSupTime(); renderMain(); if(currentLine) renderLeader();}
+function downloadCSV(rows,name){var csv=rows.map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(",");}).join("\n"); var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"})); a.download=name; a.click();}
+function exportCSV(){STATIONS_BY_LINE=loadLinesObj(); var data=load(); var rows=[["Line","Station","Status","Last By","Last Time","Schedule","Changed","Total"]]; Object.keys(STATIONS_BY_LINE).forEach(function(line){STATIONS_BY_LINE[line].forEach(function(id){var info=(data[line]&&data[line][id])||{status:"gray"}; var sched=loadSched(); var s=(sched[line]&&sched[line][id])||""; rows.push([line,id,isNA(line,id)?"N/A":info.status,info.by||"",info.time||"",s,getDone(line,id),getTotal(line,id)]);});}); downloadCSV(rows,"change_model_CURRENT.csv");}
+function exportHistoryCSV(){var h=loadHist().slice().reverse(); var rows=[["Date","Time","Line","Station","From","To","Emp","Name","Role"]]; h.forEach(function(r){rows.push([r.date||"",r.time||"",r.line||"",r.station||"",r.from||"",r.to||"",r.emp||"",r.name||"",r.role||""]);}); downloadCSV(rows,"change_model_HISTORY_RAW.csv");}
+function exportOneHistoryCSV(){var h=loadHist().filter(function(r){return r.line===currentLine;}).slice().reverse(); var rows=[["Date","Time","Line","Station","From","To","Emp","Name","Role"]]; h.forEach(function(r){rows.push([r.date||"",r.time||"",r.line||"",r.station||"",r.from||"",r.to||"",r.emp||"",r.name||"",r.role||""]);}); downloadCSV(rows,"change_model_HISTORY_"+currentLine+"_RAW.csv");}
+function showHistory(){var h=loadHist(); if(currentLine&&currentView==="leader"&&!isSupView){h=h.filter(function(r){return r.line===currentLine;}); prevView="leader";} else {prevView="main";} document.getElementById("mainView").classList.add("hidden"); document.getElementById("leaderView").classList.add("hidden"); document.getElementById("historyView").classList.remove("hidden"); currentView="history"; var list=h.slice().reverse(); document.getElementById("histCount").innerText="("+list.length+" rows)"; var html="<table><tr><th>Date</th><th>Time</th><th>Line</th><th>Station</th><th>From</th><th>To</th><th>Emp</th><th>Name</th><th>Role</th></tr>"; list.forEach(function(r){html+="<tr><td>"+esc(r.date||"")+"</td><td>"+esc(r.time||"")+"</td><td><b>"+esc(r.line||"")+"</b></td><td><b>"+esc(r.station||"")+"</b></td><td>"+esc(r.from)+"</td><td>"+esc(r.to)+"</td><td>"+esc(r.emp||"")+"</td><td>"+esc(r.name||"")+"</td><td>"+esc(r.role||"")+"</td></tr>";}); html+="</table>"; if(list.length===0) html="<p>No history yet.</p>"; document.getElementById("histTable").innerHTML=html;}
+function backFromHistory(){document.getElementById("historyView").classList.add("hidden"); if(prevView==="leader"&&currentLine&&!isSupView){document.getElementById("leaderView").classList.remove("hidden"); currentView="leader";} else {document.getElementById("mainView").classList.remove("hidden"); document.getElementById("navBar").classList.remove("hidden"); currentView="main"; renderMain();}}
+window.addEventListener("storage",function(e){if(e.key==="changeModel"||e.key==="changeModelSchedule"||e.key==="changeModelHistory"||e.key==="changeModelOnline"||e.key==="changeModelLines"||e.key==="changeModelCounts"){renderMain(); if(currentLine) renderLeader();}});
+renderMain();
 </script>
 </body>
 </html>
