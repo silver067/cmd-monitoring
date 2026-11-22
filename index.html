@@ -53,6 +53,21 @@ localStorage.setItem = function(k, v) {
   origSetItem(k, v);
   if (SYNC_KEYS.includes(k)) pushToFirebase(k);
 };
+// --- FIX: Make RESET also delete from Firebase ---
+const origRemoveItem = localStorage.removeItem.bind(localStorage);
+localStorage.removeItem = function(k) {
+  origRemoveItem(k);
+  if (SYNC_KEYS.includes(k)) {
+    try { set(ref(db, 'cmd/' + k), ""); } catch(e) {}
+  }
+};
+
+// Force clear all in Firebase - call this from Reset
+window.clearFirebaseAll = function() {
+  SYNC_KEYS.forEach(k => {
+    try { set(ref(db, 'cmd/' + k), ""); } catch(e) {}
+  });
+};
 </script>
 <meta charset="UTF-8">
 <title>CMD Monitoring Live - Nav Bar + Big Cards</title>
@@ -374,7 +389,7 @@ function doResetLine(emp,name,role){logResetForLine(currentLine,emp,name,role); 
 function openSupervisor(){if(isSupervisor){alert("Already in Admin Mode"); return;} document.getElementById("supPin").value=""; openModal("supModal");}
 function confirmSupervisor(){var pin=document.getElementById("supPin").value.trim(); if(pin!=="1234"){alert("Wrong PIN"); return;} isSupervisor=true; closeModal("supModal"); document.getElementById("supLabel").innerText="Admin Mode ON (PIN 1234)"; document.getElementById("supHint").classList.remove("hidden"); document.getElementById("adminBar").classList.add("show"); if(currentLine&&!isSupView&&currentUserEmp){var u=EMPLOYEES[currentUserEmp]; var acting=isActingLeader(currentUserEmp,currentUserRole,currentLine); var label=u.name+" ("+u.role+" - "+currentUserEmp+")"+(acting&&u.role!=="Leader"?" - Acting Leader":""); enterLeaderView(label,false);} else {renderMain();}}
 function exitSupervisor(){isSupervisor=false; document.getElementById("supLabel").innerText=""; document.getElementById("adminBar").classList.remove("show"); document.getElementById("supHint").classList.add("hidden"); if(isSupView){exitSupView(); return;} if(currentLine&&currentUserEmp){var u=EMPLOYEES[currentUserEmp]; var acting=isActingLeader(currentUserEmp,currentUserRole,currentLine); var label=u.name+" ("+u.role+" - "+currentUserEmp+")"+(acting&&u.role!=="Leader"?" - Acting Leader":""); enterLeaderView(label,false);} else {document.getElementById("leaderView").classList.add("hidden"); document.getElementById("historyView").classList.add("hidden"); document.getElementById("mainView").classList.remove("hidden"); document.getElementById("navBar").classList.remove("hidden"); currentView="main"; renderMain();}}
-function resetAll(){if(!isSupervisor){alert("Admin only"); return;} if(!confirm("Reset ALL lines?")) return; var allLines=Object.keys(loadLinesObj()); allLines.forEach(function(l){logResetForLine(l,"SUP","Admin","Supervisor");}); localStorage.removeItem("changeModel"); localStorage.removeItem("changeModelSchedule"); localStorage.removeItem("changeModelOnline"); localStorage.removeItem("changeModelCounts"); if(currentLine){backToMain(true);} renderMain(); if(currentLine) renderLeader();}
+function resetAll(){if(!isSupervisor){alert("Admin only"); return;} if(!confirm("Reset ALL lines?")) return; var allLines=Object.keys(loadLinesObj()); allLines.forEach(function(l){logResetForLine(l,"SUP","Admin","Supervisor");}); localStorage.removeItem("changeModel"); localStorage.removeItem("changeModelSchedule"); localStorage.removeItem("changeModelOnline"); localStorage.removeItem("changeModelCounts"); if (window.clearFirebaseAll) window.clearFirebaseAll(); if(currentLine){backToMain(true);} renderMain(); if(currentLine) renderLeader();}
 function clearHistory(){if(!isSupervisor){alert("Admin only"); return;} if(!confirm("Clear ALL history?")) return; localStorage.removeItem("changeModelHistory"); alert("History cleared."); showHistory();}
 function openSupTime(preselect){if(!isSupervisor){alert("Admin only"); return;} var sel=document.getElementById("supTimeLine"); sel.innerHTML=""; Object.keys(loadLinesObj()).forEach(function(l){var o=document.createElement("option"); o.value=l; o.text=l; sel.appendChild(o);}); if(preselect) sel.value=preselect; else if(currentLine) sel.value=currentLine; loadSupTime(); openModal("supTimeModal");}
 function loadSupTime(){var line=document.getElementById("supTimeLine").value; var sched=loadSched(); var stations=loadLinesObj()[line]||[]; var html=""; stations.forEach(function(id){var v=(sched[line]&&sched[line][id])||""; html+="<div class='sup-time-row'><span><b>"+esc(id)+"</b></span><input id='supTime_"+esc(id)+"' value='"+esc(v)+"'></div>";}); document.getElementById("supTimeList").innerHTML=html;}
